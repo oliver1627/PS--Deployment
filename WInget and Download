@@ -75,7 +75,7 @@ $softwareList = @(
         Url           = "https://anywhere.webrootcloudav.com/zerol/wsasme.msi";
         FileName      = "wsasme.msi";
         InstallerType = "msi";
-        SilentArgs    = "GUILIC=F2BD-ENTP-D5C7-6C49-4B1F CMDLINE=SME,quiet /qn";
+        SilentArgs    = "GUILIC=XXXX-XXXX-XXXX-XXXX CMDLINE=SME,quiet /qn";
         BypassProxy   = $false
     },
     @{
