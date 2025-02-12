@@ -1,0 +1,233 @@
+<# 
+    Script: Deploy-Applications.ps1
+    Description: Downloads and installs a list of applications on Windows 64-bit systems.
+                 Installers are stored locally in C:\ENWWF APP and installed automatically.
+                 Webroot is installed first.
+                 Microsoft Teams, Company Portal, Adobe Acrobat Reader DC, and DocuSign are installed via winget.
+                 Box Tools launches interactively so its installer UI is visible.
+                 Zoom is installed after the winget installations.
+    Note: Run this script as Administrator.
+#>
+
+###############################
+# 1. Configuration & Prerequisites
+###############################
+$proxyUrl = $null  # e.g., "http://your.proxy.server:port"
+
+if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Warning "This script must be run as an Administrator. Exiting."
+    exit
+}
+
+$installDir = "C:\ENWWF APP"
+
+if (-not (Test-Path -Path $installDir)) {
+    try {
+        New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+        Write-Host "Created directory: $installDir"
+    }
+    catch {
+        Write-Error "Failed to create directory $installDir. Error: $_"
+        exit
+    }
+} else {
+    Write-Host "Directory exists: $installDir"
+}
+
+###############################
+# 2. Function: Download-Installer
+###############################
+function Download-Installer {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Url,
+        [Parameter(Mandatory = $true)]
+        [string]$OutputFile,
+        [bool]$BypassProxy = $false
+    )
+    Write-Host "Downloading from $Url to $OutputFile ..."
+    try {
+        if ($BypassProxy) {
+            Invoke-WebRequest -Uri $Url -OutFile $OutputFile -UseBasicParsing -Headers @{
+                "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+            }
+        }
+        else {
+            Invoke-WebRequest -Uri $Url -OutFile $OutputFile -UseBasicParsing -Proxy $proxyUrl -Headers @{
+                "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+            }
+        }
+        Write-Host "Download successful: $OutputFile"
+    }
+    catch {
+        Write-Error "Failed to download $Url. Error: $_"
+    }
+}
+
+###############################
+# 3. Software List – Direct Download Installations
+# (Microsoft Teams, Company Portal, Adobe Acrobat Reader DC, DocuSign, and Zoom are handled via winget or later.)
+###############################
+$softwareList = @(
+    # Webroot (first)
+    @{
+        Name          = "Webroot";
+        Url           = "https://anywhere.webrootcloudav.com/zerol/wsasme.msi";
+        FileName      = "wsasme.msi";
+        InstallerType = "msi";
+        SilentArgs    = "GUILIC=F2BD-ENTP-D5C7-6C49-4B1F CMDLINE=SME,quiet /qn";
+        BypassProxy   = $false
+    },
+    @{
+        Name          = "Google Chrome";
+        Url           = "https://dl.google.com/chrome/install/latest/chrome_installer.exe"; 
+        FileName      = "chrome_installer.exe";
+        InstallerType = "exe";
+        SilentArgs    = "/silent /install";
+    },
+    # MS Teams is now handled via winget.
+    @{
+        Name          = "7-Zip";
+        Url           = "https://www.7-zip.org/a/7z2301-x64.exe"; 
+        FileName      = "7z2301-x64.exe";
+        InstallerType = "exe";
+        SilentArgs    = "/S";
+    },
+    @{
+        Name          = "Box Drive";
+        Url           = "https://e3.boxcdn.net/desktop/releases/win/BoxDrive.msi";
+        FileName      = "BoxDrive.msi";
+        InstallerType = "msi";
+        SilentArgs    = "/qn";
+        BypassProxy   = $true
+    },
+    @{
+        Name          = "Box Tools";
+        Url           = "https://e3.boxcdn.net/box-installers/boxedit/win/currentrelease/BoxToolsInstaller.exe";
+        FileName      = "BoxToolsInstaller.exe";
+        InstallerType = "exe";
+        Interactive   = $true;
+        BypassProxy   = $true
+    }
+)
+
+###############################
+# 4. Loop Through Direct Installations
+###############################
+foreach ($software in $softwareList) {
+    Write-Host "--------------------------------------------"
+    Write-Host "Processing $($software.Name)..."
+    $fullPath = Join-Path -Path $installDir -ChildPath $software.FileName
+
+    $bypass = $false
+    if ($software.ContainsKey("BypassProxy")) { $bypass = $software.BypassProxy }
+    
+    Download-Installer -Url $software.Url -OutputFile $fullPath -BypassProxy $bypass
+
+    if (Test-Path $fullPath) {
+        Write-Host "Installing $($software.Name)..."
+        try {
+            if ($software.InstallerType -eq "msi") {
+                Start-Process "msiexec.exe" -ArgumentList "/i `"$fullPath`" $($software.SilentArgs)" -Wait -NoNewWindow
+            }
+            else {
+                if (($software.ContainsKey("Interactive")) -and ($software.Interactive)) {
+                    Start-Process -FilePath $fullPath -Wait
+                }
+                else {
+                    Start-Process -FilePath $fullPath -ArgumentList $software.SilentArgs -Wait -NoNewWindow
+                }
+            }
+            Write-Host "$($software.Name) installation completed successfully."
+        }
+        catch {
+            Write-Error "Installation failed for $($software.Name): $_"
+        }
+    }
+    else {
+        Write-Error "Installer for $($software.Name) was not downloaded. Skipping installation."
+    }
+}
+
+###############################
+# 5. Install Applications via winget
+###############################
+if (Get-Command winget -ErrorAction SilentlyContinue) {
+    Write-Host "--------------------------------------------"
+    
+    Write-Host "Installing Microsoft Teams via winget automatically..."
+    try {
+        winget install --id XP8BT8DW290MPQ --source msstore --silent --accept-package-agreements --accept-source-agreements
+    }
+    catch {
+        Write-Error "winget failed to install Microsoft Teams: $_"
+        Write-Host "Falling back to launching the Microsoft Store for Microsoft Teams..."
+        Start-Process -FilePath "ms-windows-store://pdp/?ProductId=XP8BT8DW290MPQ" -ArgumentList "-launch"
+    }
+    
+    Write-Host "--------------------------------------------"
+    Write-Host "Installing Company Portal via winget automatically..."
+    try {
+        winget install --id 9WZDNCRFJ3PZ --source msstore --silent --accept-package-agreements --accept-source-agreements
+    }
+    catch {
+        Write-Error "winget failed to install Company Portal: $_"
+        Write-Host "Falling back to launching the Microsoft Store for Company Portal..."
+        Start-Process -FilePath "ms-windows-store://pdp/?ProductId=9WZDNCRFJ3PZ" -ArgumentList "-launch"
+    }
+    
+    Write-Host "--------------------------------------------"
+    Write-Host "Installing Adobe Acrobat Reader DC via winget automatically..."
+    try {
+        winget install --id XPDP273C0XHQH2 --source msstore --silent --accept-package-agreements --accept-source-agreements
+    }
+    catch {
+        Write-Error "winget failed to install Adobe Acrobat Reader DC: $_"
+    }
+    
+    Write-Host "--------------------------------------------"
+    Write-Host "Installing DocuSign via winget automatically..."
+    try {
+        winget install --id DocuSignLLC.DocuSign --source msstore --silent --accept-package-agreements --accept-source-agreements
+    }
+    catch {
+        Write-Error "winget failed to install DocuSign: $_"
+        Write-Host "Falling back to launching the Microsoft Store for DocuSign..."
+        Start-Process -FilePath "ms-windows-store://pdp/?ProductId=<DOCUSIGN_PRODUCT_ID>" -ArgumentList "-launch"
+    }
+}
+else {
+    Write-Error "winget is not installed on this system. Launching Microsoft Store for Company Portal..."
+    Start-Process -FilePath "ms-windows-store://pdp/?ProductId=9WZDNCRFJ3PZ" -ArgumentList "-launch"
+}
+
+###############################
+# 6. Install Zoom (After winget Installations)
+###############################
+Write-Host "--------------------------------------------"
+Write-Host "Processing Zoom..."
+$zoomUrl = "https://zoom.us/client/latest/ZoomInstaller.exe"
+$zoomInstaller = Join-Path -Path $installDir -ChildPath "ZoomInstaller.exe"
+Download-Installer -Url $zoomUrl -OutputFile $zoomInstaller
+if (Test-Path $zoomInstaller) {
+    Write-Host "Installing Zoom..."
+    try {
+        Start-Process -FilePath $zoomInstaller -ArgumentList "/silent" -Wait -NoNewWindow
+        Write-Host "Zoom installation completed successfully."
+    }
+    catch {
+        Write-Error "Installation failed for Zoom: $_"
+    }
+}
+else {
+    Write-Error "Zoom installer was not downloaded. Skipping installation."
+}
+
+###############################
+# 7. Final Popup Notification
+###############################
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.MessageBox]::Show("Deployment completed. Please review the console messages for details.", "Deployment Completed", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+
+Write-Host "--------------------------------------------"
+Write-Host "Deployment completed. Please review the console messages for details."
